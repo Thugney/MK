@@ -1,0 +1,17 @@
+$updateListUri = "https://raw.githubusercontent.com/yourusername/yourrepo/main/update-apps.txt"
+$localPath = "C:\ProgramData\AppList\update-apps.txt"
+
+# Download and process the list
+Invoke-WebRequest -Uri $updateListUri -OutFile $localPath -UseBasicParsing
+$apps_to_update = Get-Content $localPath | Select-Object -Skip 1
+
+$Winget = Get-ChildItem -Path (Join-Path -Path (Join-Path -Path $env:ProgramFiles -ChildPath "WindowsApps") -ChildPath "Microsoft.DesktopAppInstaller*_x64*\winget.exe")
+
+foreach ($app in $apps_to_update) {
+    try {
+        & $winget upgrade --exact --id $app --silent --accept-source-agreements --accept-package-agreements
+        Write-Host "Updated: $app"
+    } catch {
+        Write-Warning "Failed to update: $app"
+    }
+}

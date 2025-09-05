@@ -1,0 +1,7 @@
+Version 1.0
+Microsoft.VisualStudioCode
+VideoLAN.VLC
+Mozilla.Firefox
+Adobe.Acrobat.Reader.64-bit
+7zip.7zip
+Zoom.Zoom
