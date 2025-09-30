@@ -1,6 +1,17 @@
-# OneNote UWP Detection Script for Intune Proactive Remediation
-# Purpose: Detect Microsoft OneNote UWP app installation across all users and provisioned packages
+<#
+    .Descriptions
+        detect skriptet sjekker om OneNote er installert
+        1 - Hvis OneNote finnes  = (Not compliant) trigger remediation
+        2 - Hvis OneNote ikke finnes = (compliant) trenges ikke remediation
+    .Author
+        robwol
+    .Usage 
+        skriptet rulles som intune proactive - lastes opp i intune skript remediation
+        
+    .Version
+        Pilot
 
+#>
 
 function Write-Log {
     param([string]$Message, [string]$Level = "INFO")

@@ -1,6 +1,16 @@
 <#
-.SYNOPSIS
-Force re-download of ServiceCertificate policy for App Reliability.
+    .Descriptions
+        detect skriptet sjekker servicecertificte for App relaiability - vise i intune rapport om app reliability
+        1 - Hvis serviceCertificate status hvis ikke kjører/finnes = (Not compliant) trigger remediation
+        2 - Hvis serviceCertificate status finnes/kjører (compliant) trenges ikke remediation
+    .Author
+        robwol
+    .Usage 
+        skriptet rulles som intune proactive - lastes opp i intune skript remediation
+        
+    .Version
+        Pilot
+
 #>
 
 # Logging for Intune

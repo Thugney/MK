@@ -1,3 +1,18 @@
+<#
+    .Descriptions
+        detection skriptet sjekkr aktivering status på Windows OS
+        1 - Hvis status er aktivt skriptet stopper = (Compliant)
+        2 - Hvis status på Windows lisens ikke er aktivt, trigger remediation (Not compliant)
+    .Author
+        robwol
+    .Usage 
+        skriptet rulles som intune proactive - lastes opp i intune skript remediation
+
+    .Version
+        Pilot
+
+#>
+
 try {
     $license = Get-CimInstance -ClassName SoftwareLicensingProduct -Filter "Name like 'Windows%' AND PartialProductKey IS NOT NULL"
     if ($license -and $license.LicenseStatus -eq 1) {

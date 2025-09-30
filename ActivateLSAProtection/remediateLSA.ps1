@@ -1,3 +1,16 @@
+<#
+    .Descriptions
+        remediation skriptet endrer LSA status til aktivt
+        
+    .Author
+        robwol
+    
+    .Version
+        Pilot
+
+
+#>
+
 $Path = "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa"
 $Name = "RunAsPPL"
 $Type = "DWORD"

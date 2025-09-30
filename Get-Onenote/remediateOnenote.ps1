@@ -1,4 +1,17 @@
-# Remove OneNote UWP - Enhanced Version for Intune Proactive Remediation
+<#
+    .Descriptions
+        remediate skript forsøker å fjerne OneNote
+    
+    .Author
+        robwol
+    .Usage 
+        skriptet rulles som intune proactive - lastes opp i intune skript remediation
+        
+    .Version
+        Pilot
+
+#>
+
 #Requires -RunAsAdministrator  # Intune runs as SYSTEM, but keeps for local testing
 
 param(

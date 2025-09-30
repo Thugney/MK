@@ -1,3 +1,17 @@
+<#
+    .Descriptions
+        Remediation kriptet 
+        1 - skriptet forsøker å fikse lagring på C disken ved å slette cleanoutoptions
+        
+    .Author
+        robwol
+    .Usage 
+        skriptet rulles som intune proactive - lastes opp i intune skript remediation
+        
+    .Version
+        Pilot
+
+#>
 try {
     Write-Output "Starting disk cleanup remediation"# Set up registry for Disk Cleanup automation
 $regPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches"

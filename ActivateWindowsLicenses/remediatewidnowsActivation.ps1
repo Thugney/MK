@@ -1,3 +1,16 @@
+<#
+    .Descriptions
+        remediation skriptet forsøker å aktivering Windows lisens
+        
+    .Author
+        robwol
+    .Usage 
+        skriptet rulles som intune proactive - lastes opp i intune skript remediation
+        
+    .Version
+        Pilot
+
+#>
 try {
     Write-Output "Starting Windows activation remediation"
 

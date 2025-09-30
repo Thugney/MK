@@ -1,6 +1,15 @@
 <#
-.SYNOPSIS
-Force re-download of ServiceCertificate policy for App Reliability.
+    .Descriptions
+        remediate skriptet  re-installere servicecertificte for App relaiability - vise i intune rapport om app reliability
+        
+    .Author
+        robwol
+    .Usage 
+        skriptet rulles som intune proactive - lastes opp i intune skript remediation
+        
+    .Version
+        Pilot
+
 #>
 
 # Logging for Intune
