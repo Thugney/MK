@@ -1,23 +1,24 @@
 <#
-    Author: robwol
+    
     Description: download 8 custom Teams background images from intranet URLs
-                 and place them in the new Teams client directory (%APPDATA%\Microsoft\Teams\meetingbackgroundsdatastore).
+                 and place them in the new Teams client directory (%APPDATA%\Microsoft\Teams\meetingbackgroundsdatastore)
+  Author robwol
    pilot
 #>
 $ErrorActionPreference = "Stop"
 $LogPath = "$env:LOCALAPPDATA\CustomLogs\TeamsBackgrounds_Remediate.log"
 $TeamsBackgroundPath = "$env:APPDATA\Microsoft\Teams\meetingbackgroundsdatastore"
 
-# Erstatt med dine GitHub raw-URLer (f.eks. https://raw.githubusercontent.com/Thugney/MK/main/MSteamsBackground/mk_teamsbakgrunn_gamlegaarden%20tulipaner.png)
+#(f.eks. https://raw.githubusercontent.com/Thugney/MK/main/MSteamsBackground/mk_teamsbakgrunn_gamlegaarden%20tulipaner.png)
 $ImageUrls = @(
-    "https://raw.githubusercontent.com/Thugney/MK/main/MSteamsBackground/mk_teamsbakgrunn_gamlegaarden%20tulipaner.png",
-    "https://raw.githubusercontent.com/Thugney/MK/main/MSteamsBackground/mk_teamsbakgrunn_foss.png",
-    "https://raw.githubusercontent.com/Thugney/MK/main/MSteamsBackground/mk_teamsbakgrunn_bl%C3%A5%20b%C3%B8lge.png",
-    "https://raw.githubusercontent.com/Thugney/MK/main/MSteamsBackground/mk_teamsbakgrunn_hoppsenter%20vinter.png",
-    "https://raw.githubusercontent.com/Thugney/MK/main/MSteamsBackground/mk_teamsbakgrunn_vei%20sommer.png",
-    "https://raw.githubusercontent.com/Thugney/MK/main/MSteamsBackground/mk_teamsbakgrunn_i%20skogen%20sommer.png",
-    "https://raw.githubusercontent.com/Thugney/MK/main/MSteamsBackground/mk_teamsbakgrunn_solnedgang%20vinter.png",
-    "https://raw.githubusercontent.com/Thugney/MK/main/MSteamsBackground/mk_teamsbakgrunn_vann%20sommer.png"
+    "https://raw.githubusercontent.com/Thugney/MK/refs/heads/main/MSteamsBackground/mk_teamsbakgrunn_gamlegaarden%20tulipaner.png",
+    "https://raw.githubusercontent.com/Thugney/MK/refs/heads/main/MSteamsBackground/mk_teamsbakgrunn_foss.png",
+    "https://raw.githubusercontent.com/Thugney/MK/refs/heads/main/MSteamsBackground/mk_teamsbakgrunn_bl%C3%A5%20b%C3%B8lge.png",
+    "https://raw.githubusercontent.com/Thugney/MK/refs/heads/main/MSteamsBackground/mk_teamsbakgrunn_hoppsenter%20vinter.png?raw=true",
+    "https://raw.githubusercontent.com/Thugney/MK/refs/heads/main/MSteamsBackground/mk_teamsbakgrunn_vei%20sommer.png",
+    "https://raw.githubusercontent.com/Thugney/MK/refs/heads/main/MSteamsBackground/mk_teamsbakgrunn_i%20skogen%20sommer.png",
+    "https://raw.githubusercontent.com/Thugney/MK/refs/heads/main/MSteamsBackground/mk_teamsbakgrunn_solnedgang%20vinter.png",
+    "https://raw.github.com/Thugney/MK/blob/main/MSteamsBackground/mk_teamsbakgrunn_vann%20sommer.png"
 )
 
 $ImageNames = @(
