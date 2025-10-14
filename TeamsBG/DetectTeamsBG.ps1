@@ -4,7 +4,6 @@
                  in the new Teams client directory (%APPDATA%\Microsoft\Teams\meetingbackgroundsdatastore).
     pilot
 #>
-
 $ErrorActionPreference = "Stop"
 $LogPath = "$env:LOCALAPPDATA\CustomLogs\TeamsBackgrounds_Detect.log"
 $TeamsBackgroundPath = "$env:APPDATA\Microsoft\Teams\meetingbackgroundsdatastore"
@@ -25,7 +24,7 @@ if (-not (Test-Path -Path (Split-Path $LogPath -Parent))) {
 }
 
 # Initialiser logg
-"$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - Starter deteksjonsskript" | Out-File -FilePath $LogPath -Append
+"$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - Starter deteksjonsskript for bruker: $env:USERNAME" | Out-File -FilePath $LogPath -Append
 
 # Sjekk om Teams-bakgrunnskatalog eksisterer
 if (-not (Test-Path -Path $TeamsBackgroundPath)) {
