@@ -4,8 +4,6 @@
                  and place them in the new Teams client directory (%APPDATA%\Microsoft\Teams\meetingbackgroundsdatastore).
    pilot
 #>
-
-
 $ErrorActionPreference = "Stop"
 $LogPath = "$env:LOCALAPPDATA\CustomLogs\TeamsBackgrounds_Remediate.log"
 $TeamsBackgroundPath = "$env:APPDATA\Microsoft\Teams\meetingbackgroundsdatastore"
