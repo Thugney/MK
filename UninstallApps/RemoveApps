@@ -1,0 +1,499 @@
+# Remediation Script for Intune Proactive Remediation (Multi-App)
+# Uninstalls specified apps silently, with cleanup for leftovers
+# Exit: 0 = Success, 1 = Failure
+
+$Apps = @(
+    @{
+        DisplayName = "Azure Information Protection"
+        Publisher = "Microsoft Corporation"
+        ProductCode = "{86B70A45-00A6-4CBD-97A8-464A1254D179}"
+        UninstallString = ""
+        UsePartialMatch = $true
+        ProcessesToClose = @("ULClient", "OfficeClickToRun")
+        FoldersToDelete = @(
+            "$env:PROGRAMFILES\Microsoft Azure Information Protection",
+            "$env:PROGRAMFILES(x86)\Microsoft Azure Information Protection",
+            "$env:APPDATA\Microsoft\Azure Information Protection"
+        )
+        RegistryKeysToDelete = @(
+            "HKCU:\Software\Microsoft\Azure Information Protection",
+            "HKLM:\Software\Microsoft\Azure Information Protection"
+        )
+        CustomUninstallArgs = "/quiet /norestart"
+    },
+    @{
+        DisplayName = "Zoom"
+        Publisher = "Zoom Video Communications"
+        ProductCode = ""
+        UninstallString = ""
+        UsePartialMatch = $true
+        ProcessesToClose = @("Zoom", "CptHost", "CptControl")
+        FoldersToDelete = @(
+            "$env:APPDATA\Zoom",
+            "$env:PROGRAMFILES\Zoom",
+            "$env:PROGRAMFILES(x86)\Zoom",
+            "$env:PROGRAMDATA\Zoom"
+        )
+        RegistryKeysToDelete = @(
+            "HKCU:\Software\Zoom",
+            "HKLM:\Software\Zoom",
+            "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ZoomUMX"
+        )
+        CustomUninstallArgs = ""
+    },
+    @{
+        DisplayName = "VLC media player"
+        Publisher = "VideoLAN"
+        ProductCode = ""
+        UninstallString = ""
+        UsePartialMatch = $true
+        ProcessesToClose = @("vlc")
+        FoldersToDelete = @(
+            "$env:PROGRAMFILES\VideoLAN\VLC",
+            "$env:PROGRAMFILES(x86)\VideoLAN\VLC",
+            "$env:APPDATA\vlc"
+        )
+        RegistryKeysToDelete = @(
+            "HKCU:\Software\VideoLAN\VLC",
+            "HKLM:\Software\VideoLAN",
+            "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\VLC media player"
+        )
+        CustomUninstallArgs = "/S /L=1033"
+    }
+)
+
+$UninstallTimeout = 600
+$ForceCloseProcesses = $true
+$VerifyUninstall = $true
+$ContinueOnSingleFailure = $true
+$MaxRetries = 2
+$CleanupAfterUninstall = $true
+
+$LogPath = "$env:ProgramData\Microsoft\IntuneManagementExtension\Logs"
+$LogFile = "$LogPath\AppRemediation_$(Get-Date -Format 'yyyyMMdd').log"
+
+function Write-LogEntry {
+    param(
+        [string]$Message,
+        [string]$Level = "INFO"
+    )
+    $TimeStamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $LogEntry = "[$TimeStamp] [$Level] $Message"
+    if (-not (Test-Path $LogPath)) { New-Item -ItemType Directory -Path $LogPath -Force | Out-Null }
+    Add-Content -Path $LogFile -Value $LogEntry -Force
+    switch ($Level) {
+        "INFO" { Write-Host $LogEntry -ForegroundColor Green }
+        "WARN" { Write-Host $LogEntry -ForegroundColor Yellow }
+        "ERROR" { Write-Host $LogEntry -ForegroundColor Red }
+    }
+}
+
+function Get-UserProfiles {
+    Get-ChildItem -Path "C:\Users" -Directory | Where-Object { ${_.Name} -notin @("Public", "Default") } | Select-Object -ExpandProperty FullName
+}
+
+function Find-InstalledApplication {
+    param(
+        [hashtable]$AppConfig,
+        [string]$UserProfile = $null
+    )
+    $DisplayName = ${AppConfig}.DisplayName
+    $Publisher = ${AppConfig}.Publisher
+    $ProductCode = ${AppConfig}.ProductCode
+
+    $Context = if ($UserProfile) { "User: ${UserProfile}" } else { "System" }
+    Write-LogEntry "Searching for '${DisplayName}' (${Context})..."
+
+    $RegistryPaths = @(
+        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*"
+    )
+
+    if ($UserProfile) {
+        $NTUserDat = "${UserProfile}\NTUSER.DAT"
+        if (Test-Path $NTUserDat) {
+            $username = Split-Path ${UserProfile} -Leaf
+            $isLoggedIn = (Get-Process -Name explorer -IncludeUserName -ErrorAction SilentlyContinue | Where-Object { ${_.UserName} -like "*\${username}" }) -or
+                          (query user /server:${env:COMPUTERNAME} | Select-String ${username})
+            if ($isLoggedIn) {
+                Write-LogEntry "Skipping hive load for active user: ${username} (profile in use)" "WARN"
+                try {
+                    $sid = (New-Object System.Security.Principal.NTAccount(${username})).Translate([System.Security.Principal.SecurityIdentifier]).Value
+                    $RegistryPaths += "HKU:\${sid}\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*"
+                } catch {
+                    Write-LogEntry "Failed to get SID for active user ${username}: $(${_.Exception.Message})" "ERROR"
+                    return $null
+                }
+            } else {
+                try {
+                    reg load HKU\TempHive $NTUserDat | Out-Null
+                    $RegistryPaths += "HKU:\TempHive\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*"
+                } catch {
+                    Write-LogEntry "Failed to load hive for ${UserProfile}: $(${_.Exception.Message})" "ERROR"
+                    return $null
+                }
+            }
+        }
+    }
+
+    foreach ($Path in $RegistryPaths) {
+        try {
+            $InstalledApps = Get-ItemProperty -Path $Path -ErrorAction SilentlyContinue | Where-Object { ${_.DisplayName} }
+            foreach ($App in $InstalledApps) {
+                $Match = $false
+                if (-not [string]::IsNullOrEmpty(${DisplayName})) {
+                    $Match = if (${AppConfig}.UsePartialMatch) { ${App}.DisplayName -like "*${DisplayName}*" } else { ${App}.DisplayName -eq ${DisplayName} }
+                }
+                if ($Match) {
+                    if (-not [string]::IsNullOrEmpty(${Publisher}) -and ${App}.Publisher -notlike "*${Publisher}*") { $Match = $false }
+                    if (-not [string]::IsNullOrEmpty(${ProductCode}) -and ${App}.PSChildName -ne ${ProductCode}) { $Match = $false }
+                    if ($Match) {
+                        Write-LogEntry "Found: ${App}.DisplayName (Version: ${App}.DisplayVersion) in ${Context}" "INFO"
+                        if ($UserProfile -and -not $isLoggedIn) { reg unload HKU\TempHive | Out-Null 2>$null }
+                        return $App
+                    }
+                }
+            }
+        } catch {
+            Write-LogEntry "Error checking registry path ${Path}: $(${_.Exception.Message})" "ERROR"
+        }
+    }
+    if ($UserProfile -and -not $isLoggedIn) { reg unload HKU\TempHive | Out-Null 2>$null }
+    return $null
+}
+
+function Stop-RelatedProcesses {
+    param(
+        [string[]]$ProcessNames,
+        [string]$AppName
+    )
+    Write-LogEntry "Checking for processes to terminate for '${AppName}'..."
+
+    if (${ProcessNames}.Count -eq 0 -and -not [string]::IsNullOrEmpty(${AppName})) {
+        $ProcessNames = @(${AppName}.Replace(" ", "").ToLower(), ${AppName}.Split(" ")[0].ToLower())
+    }
+
+    foreach ($ProcessName in $ProcessNames) {
+        try {
+            $Processes = Get-Process -Name ${ProcessName} -ErrorAction SilentlyContinue
+            if ($Processes) {
+                Write-LogEntry "Found ${Processes}.Count instance(s) of process: ${ProcessName}" "WARN"
+                foreach ($Process in $Processes) {
+                    ${Process}.CloseMainWindow() | Out-Null
+                    Start-Sleep -Seconds 5
+                    if (-not ${Process}.HasExited) {
+                        Write-LogEntry "Force killing process: ${Process}.ProcessName (PID: ${Process}.Id)" "WARN"
+                        ${Process}.Kill()
+                        ${Process}.WaitForExit(10000)
+                    } else {
+                        Write-LogEntry "Process closed gracefully: ${Process}.ProcessName" "INFO"
+                    }
+                }
+            }
+        } catch {
+            Write-LogEntry "Error checking for process ${ProcessName}: $(${_.Exception.Message})" "WARN"
+        }
+    }
+}
+
+function Invoke-CustomCleanup {
+    param(
+        [hashtable]$AppConfig,
+        [string[]]$userProfiles
+    )
+    $AppName = ${AppConfig}.DisplayName
+    Write-LogEntry "Performing custom cleanup for '${AppName}'..."
+
+    foreach ($Folder in ${AppConfig}.FoldersToDelete) {
+        $ResolvedFolder = [Environment]::ExpandEnvironmentVariables(${Folder})
+        if (Test-Path ${ResolvedFolder}) {
+            try { Remove-Item -Path ${ResolvedFolder} -Recurse -Force; Write-LogEntry "Deleted folder: ${ResolvedFolder}" "INFO" } 
+            catch { Write-LogEntry "Error deleting folder ${ResolvedFolder}: $(${_.Exception.Message})" "WARN" }
+        }
+    }
+
+    foreach ($userProfile in $userProfiles) {
+        $UserAppData = "${userProfile}\AppData"
+        foreach ($Folder in ${AppConfig}.FoldersToDelete) {
+            $UserFolder = ${Folder}.Replace("%appdata%", "${UserAppData}\Roaming").Replace("$env:APPDATA", "${UserAppData}\Roaming")
+            if (Test-Path ${UserFolder}) {
+                try { Remove-Item -Path ${UserFolder} -Recurse -Force; Write-LogEntry "Deleted user folder: ${UserFolder}" "INFO" } 
+                catch { Write-LogEntry "Error deleting user folder ${UserFolder}: $(${_.Exception.Message})" "WARN" }
+            }
+        }
+    }
+
+    foreach ($RegKey in ${AppConfig}.RegistryKeysToDelete) {
+        if (Test-Path ${RegKey}) {
+            try { Remove-Item -Path ${RegKey} -Recurse -Force; Write-LogEntry "Deleted registry key: ${RegKey}" "INFO" } 
+            catch { Write-LogEntry "Error deleting registry key ${RegKey}: $(${_.Exception.Message})" "WARN" }
+        }
+    }
+
+    foreach ($userProfile in $userProfiles) {
+        $NTUserDat = "${userProfile}\NTUSER.DAT"
+        if (Test-Path ${NTUserDat}) {
+            $username = Split-Path ${userProfile} -Leaf
+            $isLoggedIn = (Get-Process -Name explorer -IncludeUserName -ErrorAction SilentlyContinue | Where-Object { ${_.UserName} -like "*\${username}" }) -or
+                          (query user /server:${env:COMPUTERNAME} | Select-String ${username})
+            if ($isLoggedIn) {
+                Write-LogEntry "Skipping hive load for cleanup of active user: ${username}" "WARN"
+                try {
+                    $sid = (New-Object System.Security.Principal.NTAccount(${username})).Translate([System.Security.Principal.SecurityIdentifier]).Value
+                    foreach ($RegKey in ${AppConfig}.RegistryKeysToDelete) {
+                        $UserRegKey = ${RegKey}.Replace("HKCU:\", "HKU:\${sid}\")
+                        if (Test-Path ${UserRegKey}) {
+                            try { Remove-Item -Path ${UserRegKey} -Recurse -Force; Write-LogEntry "Deleted active user registry key: ${UserRegKey}" "INFO" } 
+                            catch { Write-LogEntry "Error deleting active user registry key ${UserRegKey}: $(${_.Exception.Message})" "WARN" }
+                        }
+                    }
+                } catch {
+                    Write-LogEntry "Failed to get SID for active user ${username}: $(${_.Exception.Message})" "ERROR"
+                }
+            } else {
+                reg load HKU\TempHive ${NTUserDat} | Out-Null
+                foreach ($RegKey in ${AppConfig}.RegistryKeysToDelete) {
+                    $UserRegKey = ${RegKey}.Replace("HKCU:\", "HKU:\TempHive\")
+                    if (Test-Path ${UserRegKey}) {
+                        try { Remove-Item -Path ${UserRegKey} -Recurse -Force; Write-LogEntry "Deleted user registry key: ${UserRegKey}" "INFO" } 
+                        catch { Write-LogEntry "Error deleting user registry key ${UserRegKey}: $(${_.Exception.Message})" "WARN" }
+                    }
+                }
+                reg unload HKU\TempHive | Out-Null
+            }
+        }
+    }
+}
+
+function Invoke-ZoomCleanUninstall {
+    param(
+        [int]$TimeoutSeconds
+    )
+    Write-LogEntry "Handling special Zoom clean uninstall..."
+
+    try {
+        $CleanZoomUrl = "https://assets.zoom.us/docs/msi-utilities/CleanZoom.zip"
+        $TempPath = "$env:TEMP\CleanZoom.zip"
+        $ExtractPath = "$env:TEMP\CleanZoom"
+
+        Invoke-WebRequest -Uri ${CleanZoomUrl} -OutFile ${TempPath}
+        Expand-Archive -Path ${TempPath} -DestinationPath ${ExtractPath} -Force
+
+        $CleanExe = "${ExtractPath}\CleanZoom.exe"
+        if (Test-Path ${CleanExe}) {
+            $Process = Start-Process -FilePath ${CleanExe} -ArgumentList "/silent" -Wait -NoNewWindow -PassThru
+            ${Process}.WaitForExit(${TimeoutSeconds} * 1000)
+            if (${Process}.ExitCode -eq 0) {
+                Write-LogEntry "CleanZoom executed successfully" "INFO"
+                return $true
+            } else {
+                Write-LogEntry "CleanZoom failed with exit code ${Process}.ExitCode" "ERROR"
+                return $false
+            }
+        } else {
+            Write-LogEntry "CleanZoom.exe not found after extraction" "ERROR"
+            return $false
+        }
+    } catch {
+        Write-LogEntry "Error during Zoom clean uninstall: $(${_.Exception.Message})" "ERROR"
+        return $false
+    } finally {
+        Remove-Item -Path ${TempPath} -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path ${ExtractPath} -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Invoke-ApplicationUninstall {
+    param(
+        [PSObject]$Application,
+        [string]$CustomArgs,
+        [int]$TimeoutSeconds,
+        [hashtable]$AppConfig
+    )
+    $AppName = ${Application}.DisplayName
+    Write-LogEntry "Starting uninstall for: ${AppName}"
+
+    $UninstallString = ${Application}.UninstallString
+    $QuietUninstallString = ${Application}.QuietUninstallString
+    $ProductCode = ${Application}.PSChildName
+
+    if (${AppName} -like "*Zoom*") { return Invoke-ZoomCleanUninstall -TimeoutSeconds ${TimeoutSeconds} }
+
+    $UninstallCommand = ""
+    $UninstallArgs = ""
+    $IsMSI = $false
+
+    if (${ProductCode} -match "^\{[A-F0-9]{8}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{12}\}$") {
+        $IsMSI = $true
+        $UninstallCommand = "msiexec.exe"
+        $UninstallArgs = "/x `"${ProductCode}`" /quiet /norestart /l*v `"${LogPath}\MSI_Uninstall_${AppName}_$(Get-Date -Format 'yyyyMMdd_HHmmss').log`""
+    } elseif (-not [string]::IsNullOrEmpty(${QuietUninstallString})) {
+        if (${QuietUninstallString} -match '^"([^"]+)"(.*)') {
+            $UninstallCommand = ${matches}[1]
+            $UninstallArgs = ${matches}[2].Trim()
+        } else {
+            $Parts = ${QuietUninstallString}.Split(' ', 2)
+            $UninstallCommand = ${Parts}[0]
+            $UninstallArgs = if (${Parts}.Length -gt 1) { ${Parts}[1] } else { "" }
+        }
+    } elseif (-not [string]::IsNullOrEmpty(${UninstallString})) {
+        if (${UninstallString} -match '^"([^"]+)"(.*)') {
+            $UninstallCommand = ${matches}[1]
+            $UninstallArgs = ${matches}[2].Trim()
+        } else {
+            $Parts = ${UninstallString}.Split(' ', 2)
+            $UninstallCommand = ${Parts}[0]
+            $UninstallArgs = if (${Parts}.Length -gt 1) { ${Parts}[1] } else { "" }
+        }
+        if (-not ${IsMSI}) {
+            $SilentSwitches = @("/S", "/SILENT", "/VERYSILENT", "/q", "/quiet", "/uninstall /quiet")
+            $HasSilent = ${SilentSwitches} | Where-Object { ${UninstallArgs} -like "*${_}*" }
+            if (-not ${HasSilent}) { $UninstallArgs += " /S /quiet" }
+        }
+    } else {
+        Write-LogEntry "No uninstall string found" "ERROR"
+        return $false
+    }
+
+    if (-not [string]::IsNullOrEmpty(${AppConfig}.CustomUninstallArgs)) { $UninstallArgs += " ${AppConfig}.CustomUninstallArgs" }
+
+    Write-LogEntry "Uninstall Command: ${UninstallCommand} ${UninstallArgs}" "INFO"
+
+    try {
+        $ProcessStartInfo = New-Object System.Diagnostics.ProcessStartInfo
+        ${ProcessStartInfo}.FileName = ${UninstallCommand}
+        ${ProcessStartInfo}.Arguments = ${UninstallArgs}
+        ${ProcessStartInfo}.UseShellExecute = $false
+        ${ProcessStartInfo}.RedirectStandardOutput = $true
+        ${ProcessStartInfo}.RedirectStandardError = $true
+        ${ProcessStartInfo}.CreateNoWindow = $true
+
+        $Process = New-Object System.Diagnostics.Process
+        ${Process}.StartInfo = ${ProcessStartInfo}
+        ${Process}.Start() | Out-Null
+
+        $Completed = ${Process}.WaitForExit(${TimeoutSeconds} * 1000)
+
+        if (${Completed}) {
+            $ExitCode = ${Process}.ExitCode
+            $StdOut = ${Process}.StandardOutput.ReadToEnd()
+            $StdErr = ${Process}.StandardError.ReadToEnd()
+            if (${StdOut}) { Write-LogEntry "StdOut: ${StdOut}" "INFO" }
+            if (${StdErr}) { Write-LogEntry "StdErr: ${StdErr}" "WARN" }
+            $SuccessCodes = @(0, 3010, 1641)
+            if (${ExitCode} -in ${SuccessCodes}) { return $true } else {
+                Write-LogEntry "Failed with code ${ExitCode}" "ERROR"
+                return $false
+            }
+        } else {
+            Write-LogEntry "Timed out" "ERROR"
+            ${Process}.Kill()
+            return $false
+        }
+    } catch {
+        Write-LogEntry "Error: $(${_.Exception.Message})" "ERROR"
+        return $false
+    } finally {
+        if ($Process) { ${Process}.Dispose() }
+    }
+}
+
+function Test-UninstallSuccess {
+    param(
+        [hashtable]$AppConfig
+    )
+    Write-LogEntry "Verifying uninstall for '${AppConfig}.DisplayName'..."
+    Start-Sleep -Seconds 10
+
+    $RemainingApp = Find-InstalledApplication -AppConfig ${AppConfig}
+    if ($RemainingApp) { return $false }
+
+    $userProfiles = Get-UserProfiles
+    foreach ($userProfile in $userProfiles) {
+        $RemainingApp = Find-InstalledApplication -AppConfig ${AppConfig} -UserProfile ${userProfile}
+        if ($RemainingApp) { return $false }
+    }
+    return $true
+}
+
+Write-LogEntry "=== Starting Multi-App Remediation ===" "INFO"
+Write-LogEntry "Total Apps to Remediate: ${Apps}.Count" "INFO"
+
+$OverallSuccess = $true
+$ProcessedApps = 0
+$FailedApps = 0
+$userProfiles = Get-UserProfiles
+
+try {
+    foreach ($AppConfig in $Apps) {
+        $ProcessedApps++
+        Write-LogEntry "--- Processing App ${ProcessedApps}: ${AppConfig}.DisplayName ---" "INFO"
+
+        $InstalledApp = Find-InstalledApplication -AppConfig ${AppConfig}
+        $PerUserInstalls = @()
+        foreach ($userProfile in $userProfiles) {
+            $UserInstall = Find-InstalledApplication -AppConfig ${AppConfig} -UserProfile ${userProfile}
+            if ($UserInstall) { $PerUserInstalls += [PSCustomObject]@{ userProfile = ${userProfile}; Install = ${UserInstall} } }
+        }
+
+        if (-not $InstalledApp -and ${PerUserInstalls}.Count -eq 0) {
+            Write-LogEntry "Not found - skipping" "INFO"
+            continue
+        }
+
+        if (${ForceCloseProcesses}) {
+            Stop-RelatedProcesses -ProcessNames ${AppConfig}.ProcessesToClose -AppName ${AppConfig}.DisplayName
+        }
+
+        $SingleSuccess = $false
+        $RetryCount = 0
+
+        do {
+            $UninstallSuccess = $true
+            if ($InstalledApp) {
+                $UninstallSuccess = Invoke-ApplicationUninstall -Application ${InstalledApp} -CustomArgs ${AppConfig}.CustomUninstallArgs -TimeoutSeconds ${UninstallTimeout} -AppConfig ${AppConfig}
+            }
+
+            foreach ($PerUser in $PerUserInstalls) {
+                Write-LogEntry "Handling per-user uninstall for profile: ${PerUser}.userProfile" "INFO"
+            }
+
+            if (${CleanupAfterUninstall}) {
+                Invoke-CustomCleanup -AppConfig ${AppConfig} -userProfiles $userProfiles
+            }
+
+            if (${VerifyUninstall}) {
+                $SingleSuccess = Test-UninstallSuccess -AppConfig ${AppConfig}
+            } else {
+                $SingleSuccess = ${UninstallSuccess}
+            }
+
+            if (-not ${SingleSuccess}) {
+                $RetryCount++
+                Write-LogEntry "Verify failed - retrying (${RetryCount}/${MaxRetries})" "WARN"
+                Start-Sleep -Seconds 30
+            }
+        } while (-not ${SingleSuccess} -and ${RetryCount} -lt ${MaxRetries})
+
+        if (-not ${SingleSuccess}) {
+            $FailedApps++
+            $OverallSuccess = $false
+            Write-LogEntry "RESULT: FAILED" "ERROR"
+            if (-not ${ContinueOnSingleFailure}) { break }
+        } else {
+            Write-LogEntry "RESULT: SUCCESS" "INFO"
+        }
+    }
+
+    if (${OverallSuccess}) {
+        Write-LogEntry "REMEDIATION RESULT: All successful" "INFO"
+        exit 0
+    } else {
+        Write-LogEntry "REMEDIATION RESULT: ${FailedApps} failures" "ERROR"
+        exit 1
+    }
+} catch {
+    Write-LogEntry "Critical error: $(${_.Exception.Message})" "ERROR"
+    exit 1
+}

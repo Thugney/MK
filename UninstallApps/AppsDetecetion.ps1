@@ -1,11 +1,19 @@
-# ===================================================================
-# Application Detection Script for Intune Proactive Remediation
-# Purpose: Detect if specified application is installed
-# Exit Codes: 0 = Not Found (Compliant), 1 = Found (Non-Compliant)
-# ===================================================================
+<#
+ .Descriptions
+    Detection skript for Intune Proactive Remediation
+    skriptet sjekkr om enkelte apper finnes
+    Hvis finnes  1 = Found (Non-Compliant)
+    hvis ikke innes Exit Codes: 0 = Not Found (Compliant)
+    
+.Author
+    Robwol
+
+#>
+
+
 
 # CONFIGURATION SECTION - CUSTOMIZE THESE VARIABLES
-# ===================================================================
+
 $AppDisplayName = "Zoom"           # Application display name (partial match supported)
 $AppPublisher = ""                        # Optional: Publisher name for additional validation
 $AppProductCode = "{86B70A45-00A6-4CBD-97A8-464A1254D179}"#Get-WmiObject Win32_Product |Format-Table Name, IdentifyingNumber
@@ -16,9 +24,6 @@ $UsePartialMatch = $true                  # Set to $false for exact name matchin
 $LogPath = "$env:ProgramData\Microsoft\IntuneManagementExtension\Logs"
 $LogFile = "$LogPath\AppDetection_$(Get-Date -Format 'yyyyMMdd').log"
 
-# ===================================================================
-# FUNCTIONS
-# ===================================================================
 
 function Write-LogEntry {
     param(

@@ -1,6 +1,13 @@
 <#
-.SYNOPSIS
-Intune Remediation: Install pending Windows Updates.
+ .Descriptions
+    Detection skript for Intune Proactive Remediation
+    skriptet sjekkr om enkelte apper finnes
+    Hvis finnes  1 = Found (Non-Compliant)
+    hvis ikke innes Exit Codes: 0 = Not Found (Compliant)
+    
+.Author
+    Robwol
+
 #>
 
 try {

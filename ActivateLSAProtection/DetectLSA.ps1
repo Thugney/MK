@@ -16,7 +16,7 @@
 
 $Path = "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa"
 $Name = "RunAsPPL"
-$Type = "DWORD"
+$Type = "DWORD" = 
 $Value = 1
 
 Try {
@@ -32,3 +32,5 @@ Catch {
     Write-Warning "Not Compliant"
     Exit 1
 }
+
+ 

@@ -1,8 +1,17 @@
-# Detection: Check for pending Windows Updates.
-# Exit 0 = Compliant (no updates); Exit 1 = Non-Compliant (updates available)
+<#
+ .Descriptions
+    Detection skript for Intune Proactive Remediation
+    skriptet sjekker 
+    Hvis finnes  1 = Found (Non-Compliant)
+    hvis ikke innes Exit Codes: 0 = Not Found (Compliant)
+    
+.Author
+    Robwol
+
+#>
 
 try {
-    # Install PSWindowsUpdate if needed (Intune runs as SYSTEM, so safe)
+    # Install PSWindowsUpdate 
     if (-not (Get-Module -ListAvailable -Name PSWindowsUpdate)) {
         Install-Module -Name PSWindowsUpdate -Force -Scope AllUsers -ErrorAction SilentlyContinue | Out-Null
     }

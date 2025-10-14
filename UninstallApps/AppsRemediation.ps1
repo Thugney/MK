@@ -1,11 +1,16 @@
-# ===================================================================
-# Application Remediation Script for Intune Proactive Remediation
-# Purpose: Uninstall specified application silently
-# Exit Codes: 0 = Success, 1 = Failure
-# ===================================================================
+<#
+ .Descriptions
+    remediation skript for Intune Proactive Remediation
+    skriptet aviinstallere funnet apper 
+    
+    
+.Author
+    Robwol
+
+#>
 
 # CONFIGURATION SECTION - MUST MATCH DETECTION SCRIPT
-# ===================================================================
+
 $AppDisplayName = "Zoom"           # Application display name (must match detection script)
 $AppPublisher = ""                        # Optional: Publisher name for validation
 $AppProductCode = "{86B70A45-00A6-4CBD-97A8-464A1254D179}" 
@@ -23,9 +28,6 @@ $VerifyUninstall = $true                 # Re-check if app was successfully remo
 $LogPath = "$env:ProgramData\Microsoft\IntuneManagementExtension\Logs"
 $LogFile = "$LogPath\AppRemediation_$(Get-Date -Format 'yyyyMMdd').log"
 
-# ===================================================================
-# FUNCTIONS
-# ===================================================================
 
 function Write-LogEntry {
     param(
