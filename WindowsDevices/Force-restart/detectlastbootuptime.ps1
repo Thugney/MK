@@ -1,29 +1,13 @@
 <#
 .SYNOPSIS
-    Skript for å planlegge en omstart av enheten
+     skript trygger en omstart
 .DESCRIPTION
-    Kjører hvis detect-skriptet finner enheter som ikke er omstartet på mer enn 7 dager.
-    Varsler brukeren med en toast-melding umiddelbart og planlegger en omstart.
+    skriptet sjekker omstart dato standard: 7 dager
 .PARAMETER RestartDelayMinutes
-    Minutter å vente før tvungen omstart (standard: 10)
+    Antall minutter før omstart (standard: 10)
 .Author
     robwol
 #>
-
-# Parameters
-<#
-.SYNOPSIS
-    Skript for å planlegge en omstart av enheten
-.DESCRIPTION
-    Kjører hvis detect-skriptet finner enheter som ikke er omstartet på mer enn 7 dager.
-    Varsler brukeren med en toast-melding umiddelbart og planlegger en omstart.
-.PARAMETER RestartDelayMinutes
-    Minutter å vente før tvungen omstart (standard: 10)
-.Author
-    robwol
-#>
-
-# Parameters
 param (
     [int]$RestartDelayMinutes = 10
 )
@@ -32,17 +16,25 @@ $ToastScriptPath = "C:\MK-automation\toast.ps1"
 $LogPath = "C:\ProgramData\MK-automation\RemediationLog.txt"
 $LockFile = "$env:TEMP\ToastLock_$(Get-Date -Format 'yyyyMMdd').txt"
 
-# Log function
+# Log function with error handling
 function Write-Log {
     param ($Message)
-    $LogMessage = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss'): $Message"
-    Add-Content -Path $LogPath -Value $LogMessage -Force
+    try {
+        $LogMessage = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss'): $Message"
+        Add-Content -Path $LogPath -Value $LogMessage -Force -ErrorAction Stop
+    } catch {
+        Write-Output $LogMessage
+    }
 }
 
 # Ensure log directory exists
 $LogDir = Split-Path $LogPath -Parent
 if (-not (Test-Path $LogDir)) {
-    New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
+    try {
+        New-Item -ItemType Directory -Path $LogDir -Force -ErrorAction Stop | Out-Null
+    } catch {
+        Write-Warning "Failed to create log directory: $_"
+    }
 }
 
 # Get last reboot time
@@ -69,19 +61,6 @@ try {
     Write-Log "Error getting logged-on user: $($_.Exception.Message)"
 }
 
-# Check power state
-$SkipOnBattery = $true
-try {
-    $Battery = Get-CimInstance -ClassName Win32_Battery -ErrorAction SilentlyContinue
-    if ($Battery -and $Battery.BatteryStatus -eq 1 -and $SkipOnBattery) {
-        Write-Log "Device is on battery. Skipping remediation."
-        Write-Output "Remediation skipped due to battery power."
-        exit 0
-    }
-} catch {
-    Write-Log "Error checking power state: $($_.Exception.Message)"
-}
-
 # Prevent multiple runs today
 if (Test-Path $LockFile) {
     $LastRun = Get-Item $LockFile | Select-Object -ExpandProperty LastWriteTime
@@ -106,7 +85,7 @@ if ($LoggedOnUser -and (Test-Path $ToastScriptPath)) {
         $Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$ToastScriptPath`""
         $Trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(2)
         $Principal = New-ScheduledTaskPrincipal -UserId $LoggedOnUser -LogonType Interactive -RunLevel Limited
-        $Settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 1) -Hidden -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew
+        $Settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 1) -Hidden -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew
 
         Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Principal $Principal -Settings $Settings -Force | Out-Null
         Write-Log "Toast task registered and will trigger once: $TaskName"
@@ -121,13 +100,13 @@ if ($LoggedOnUser -and (Test-Path $ToastScriptPath)) {
     Write-Log "No logged-on user or toast script not found at $ToastScriptPath. Skipping toast."
 }
 
-# Schedule forced restart without dialog
+# Schedule forced restart
 try {
     $DelaySeconds = $RestartDelayMinutes * 60
-    $ShutdownArgs = "/r /f /t $DelaySeconds /d p:0:0" # supress sign out notice
+    $ShutdownArgs = "/r /f /t $DelaySeconds /d p:0:0"
     $ShutdownResult = Start-Process -FilePath "shutdown.exe" -ArgumentList $ShutdownArgs -NoNewWindow -PassThru -Wait
     if ($ShutdownResult.ExitCode -eq 0) {
-        Write-Log "Restart scheduled in $RestartDelayMinutes minutes"
+        Write-Log "Restart scheduled in $RestartDelayMinutes minutes using shutdown.exe"
         Write-Output "Remediation completed: Toast triggered, restart scheduled."
         exit 0
     } else {
