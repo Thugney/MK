@@ -1,121 +1,171 @@
 <#
-    .Descriptions
-        Remediation kriptet 
-        1 - skriptet forsøker å fikse lagring på C disken ved å slette cleanoutoptions
-        
-    .Author
-        robwol
-    .Usage 
-        skriptet rulles som intune proactive - lastes opp i intune skript remediation
-        
-    .Version
-        Pilot
+.SYNOPSIS
+    Renser C-disk automatisk uten GUI
 
+.DESCRIPTION
+    Remediation-skript for Intune - helt stille uten brukerinteraksjon.
+    Renser: temp-filer, Windows Update cache, Recycle Bin, prefetch, logs.
+    Unngår cleanmgr.exe som krever desktop-interaksjon.
+
+.NOTES
+    Author: robwol
+    Version: 1.0
+    Assignment: Device groups
+    Context: System
+    Log: C:\MK-LogFiles\DiskSpace-Remediate.log
 #>
-try {
-    Write-Output "Starting disk cleanup remediation"# Set up registry for Disk Cleanup automation
-$regPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches"
-$cleanupOptions = @(
-    "Active Setup Temp Folders",
-    "BranchCache",
-    "D3D Shader Cache",
-    "Delivery Optimization Files",
-    "Diagnostic Data Viewer database files",
-    "Downloaded Program Files",
-    "Internet Cache Files",
-    "Offline Pages Files",
-    "Old ChkDsk Files",
-    "Previous Installations",
-    "Recycle Bin",
-    "RetailDemo Offline Content",
-    "Service Pack Cleanup",
-    "Setup Log Files",
-    "System error memory dump files",
-    "System error minidump files",
-    "Temporary Files",
-    "Temporary Setup Files",
-    "Thumbnail Cache",
-    "Update Cleanup",
-    "Upgrade Discarded Files",
-    "User file versions",
-    "Windows Defender",
-    "Windows Error Reporting Files",
-    "Windows ESD installation files",
-    "Windows Upgrade Log Files"
-)
-foreach ($option in $cleanupOptions) {
-    $fullPath = "$regPath\$option"
-    if (-not (Test-Path $fullPath)) {
-        New-Item -Path $fullPath -Force | Out-Null
+
+$ErrorActionPreference = 'SilentlyContinue'
+
+$LogPath = "C:\MK-LogFiles\DiskSpace-Remediate.log"
+$LogDir = Split-Path $LogPath -Parent
+
+# Opprett loggmappe
+if (-not (Test-Path $LogDir)) { 
+    New-Item -Path $LogDir -ItemType Directory -Force | Out-Null 
+}
+
+function Write-Log {
+    param([string]$Message)
+    $Timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+    "$Timestamp - $Message" | Out-File -FilePath $LogPath -Append -Encoding UTF8
+}
+
+function Get-FolderSizeMB {
+    param([string]$Path)
+    if (Test-Path $Path) {
+        $Size = (Get-ChildItem -Path $Path -Recurse -Force -ErrorAction SilentlyContinue | 
+                 Measure-Object -Property Length -Sum -ErrorAction SilentlyContinue).Sum
+        return [math]::Round(($Size / 1MB), 2)
     }
-    Set-ItemProperty -Path $fullPath -Name "StateFlags0001" -Value 2 -Type DWord -Force
+    return 0
 }
 
-# Cleanup file paths
-$cleanupPaths = @(
-    $env:TEMP,
-    "$env:SystemRoot\Temp",
-    "$env:SystemRoot\Logs",
-    "$env:SystemRoot\Prefetch",
-    "$env:LocalAppData\Microsoft\Windows\Temporary Internet Files",
-    "$env:LocalAppData\Temp",
-    "$env:SystemRoot\SoftwareDistribution\Download"
-)
-
-$totalCleaned = 0
-
-# Stop Windows Update service before cleaning SoftwareDistribution
-if (Test-Path "$env:SystemRoot\SoftwareDistribution\Download") {
-    Stop-Service -Name wuauserv -Force -ErrorAction SilentlyContinue
-}
-
-# Clean user profiles' temp folders
-$userProfiles = Get-ChildItem "C:\Users" -Directory -ErrorAction SilentlyContinue
-foreach ($profile in $userProfiles) {
-    $userTemp = "$($profile.FullName)\AppData\Local\Temp"
-    $userInternetFiles = "$($profile.FullName)\AppData\Local\Microsoft\Windows\Temporary Internet Files"
-    if (Test-Path $userTemp) { $cleanupPaths += $userTemp }
-    if (Test-Path $userInternetFiles) { $cleanupPaths += $userInternetFiles }
-}
-
-foreach ($path in $cleanupPaths) {
+function Clear-FolderContent {
+    param(
+        [string]$Path,
+        [string]$Description,
+        [int]$DaysOld = 0
+    )
+    
+    if (-not (Test-Path $Path)) { return 0 }
+    
+    $SizeBefore = Get-FolderSizeMB -Path $Path
+    
     try {
-        Write-Output "Cleaning: $path"
-        # Pre-calculate size
-        $size = (Get-ChildItem -Path $path -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum -ErrorAction SilentlyContinue).Sum
-        if ($null -eq $size) { $size = 0 }
-        Remove-Item -Path "$path\*" -Recurse -Force -ErrorAction SilentlyContinue
-        $totalCleaned += $size
+        if ($DaysOld -gt 0) {
+            # Slett kun filer eldre enn X dager
+            $CutoffDate = (Get-Date).AddDays(-$DaysOld)
+            Get-ChildItem -Path $Path -Recurse -Force -ErrorAction SilentlyContinue | 
+                Where-Object { $_.LastWriteTime -lt $CutoffDate } |
+                Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        else {
+            # Slett alt
+            Get-ChildItem -Path $Path -Recurse -Force -ErrorAction SilentlyContinue | 
+                Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        
+        $SizeAfter = Get-FolderSizeMB -Path $Path
+        $Cleaned = [math]::Round($SizeBefore - $SizeAfter, 2)
+        
+        if ($Cleaned -gt 0) {
+            Write-Log "$Description : Frigjort $Cleaned MB"
+        }
+        
+        return $Cleaned
     }
     catch {
-        Write-Output "Warning: Failed to clean $path - $($_.Exception.Message)"
+        Write-Log "Feil ved rensing av $Description : $($_.Exception.Message)"
+        return 0
     }
 }
 
-# Restart Windows Update service
-Start-Service -Name wuauserv -ErrorAction SilentlyContinue
+# Start
+Write-Log "=== Starter disk cleanup ==="
 
-# Empty Recycle Bin
-Write-Output "Emptying Recycle Bin"
-Clear-RecycleBin -DriveLetter C -Force -ErrorAction SilentlyContinue
+$DiskBefore = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'").FreeSpace / 1GB
+Write-Log "Ledig plass før: $([math]::Round($DiskBefore, 2)) GB"
 
-# Run Disk Cleanup utility
-Write-Output "Running system disk cleanup"
-Start-Process -FilePath "cleanmgr.exe" -ArgumentList "/sagerun:1" -Wait -WindowStyle Hidden -ErrorAction SilentlyContinue
+$TotalCleaned = 0
 
-# Check final disk space
-$cDrive = Get-Volume -DriveLetter C -ErrorAction SilentlyContinue
-$freeSpaceGB = [math]::Round($cDrive.SizeRemaining / 1GB, 2)
-$cleanedMB = [math]::Round($totalCleaned / 1MB, 2)
+# 1. Windows Temp
+$TotalCleaned += Clear-FolderContent -Path "$env:SystemRoot\Temp" -Description "Windows Temp"
 
-Write-Output "Cleanup completed"
-Write-Output "Cleaned: $cleanedMB MB"
-Write-Output "Current free space: $freeSpaceGB GB"
+# 2. Prefetch (eldre enn 7 dager - beholder nylige for ytelse)
+$TotalCleaned += Clear-FolderContent -Path "$env:SystemRoot\Prefetch" -Description "Prefetch" -DaysOld 7
 
-
-Write-Output "Remediation execution completed"
-exit 0}
-catch {
-    Write-Output "Error during cleanup: $($_.Exception.Message)"
-    exit 1
+# 3. SoftwareDistribution Download (stopp/start Windows Update)
+try {
+    Stop-Service -Name wuauserv -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+    $TotalCleaned += Clear-FolderContent -Path "$env:SystemRoot\SoftwareDistribution\Download" -Description "Windows Update Download"
+    Start-Service -Name wuauserv -ErrorAction SilentlyContinue
 }
+catch {
+    Write-Log "Feil ved Windows Update cache: $($_.Exception.Message)"
+}
+
+# 4. Windows Logs (eldre enn 14 dager)
+$TotalCleaned += Clear-FolderContent -Path "$env:SystemRoot\Logs" -Description "Windows Logs" -DaysOld 14
+
+# 5. Alle brukerprofiler - Temp mapper
+$UserProfiles = Get-ChildItem -Path "C:\Users" -Directory -ErrorAction SilentlyContinue | 
+                Where-Object { $_.Name -notin @('Public', 'Default', 'Default User', 'All Users') }
+
+foreach ($Profile in $UserProfiles) {
+    $UserTemp = Join-Path $Profile.FullName "AppData\Local\Temp"
+    $TotalCleaned += Clear-FolderContent -Path $UserTemp -Description "User Temp ($($Profile.Name))"
+}
+
+# 6. Recycle Bin - silent tømming
+try {
+    $Shell = New-Object -ComObject Shell.Application
+    $RecycleBin = $Shell.NameSpace(0xA)
+    $RecycleItems = $RecycleBin.Items()
+    
+    if ($RecycleItems.Count -gt 0) {
+        $RecycleSizeMB = 0
+        foreach ($Item in $RecycleItems) {
+            $RecycleSizeMB += $Item.Size / 1MB
+        }
+        
+        # Clear via COM - helt stille
+        Clear-RecycleBin -DriveLetter C -Force -ErrorAction SilentlyContinue
+        
+        $TotalCleaned += [math]::Round($RecycleSizeMB, 2)
+        Write-Log "Recycle Bin: Frigjort $([math]::Round($RecycleSizeMB, 2)) MB"
+    }
+}
+catch {
+    Write-Log "Feil ved Recycle Bin: $($_.Exception.Message)"
+}
+
+# 7. Windows Error Reporting
+$TotalCleaned += Clear-FolderContent -Path "$env:ProgramData\Microsoft\Windows\WER\ReportQueue" -Description "Windows Error Reports"
+$TotalCleaned += Clear-FolderContent -Path "$env:ProgramData\Microsoft\Windows\WER\ReportArchive" -Description "Windows Error Archive"
+
+# 8. Delivery Optimization cache
+$TotalCleaned += Clear-FolderContent -Path "$env:SystemRoot\SoftwareDistribution\DeliveryOptimization" -Description "Delivery Optimization"
+
+# 9. Thumbnail cache (alle brukere)
+foreach ($Profile in $UserProfiles) {
+    $ThumbPath = Join-Path $Profile.FullName "AppData\Local\Microsoft\Windows\Explorer"
+    if (Test-Path $ThumbPath) {
+        Get-ChildItem -Path $ThumbPath -Filter "thumbcache_*.db" -Force -ErrorAction SilentlyContinue | 
+            Remove-Item -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# Resultat
+$DiskAfter = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'").FreeSpace / 1GB
+$ActualFreed = [math]::Round($DiskAfter - $DiskBefore, 2)
+
+Write-Log "=== Cleanup fullført ==="
+Write-Log "Estimert frigjort: $TotalCleaned MB"
+Write-Log "Faktisk frigjort: $([math]::Round($ActualFreed * 1024, 2)) MB"
+Write-Log "Ledig plass etter: $([math]::Round($DiskAfter, 2)) GB"
+
+# Output for Intune
+Write-Output "Cleanup completed. Freed: $([math]::Round($ActualFreed * 1024, 2)) MB. Free space: $([math]::Round($DiskAfter, 2)) GB"
+exit 0
